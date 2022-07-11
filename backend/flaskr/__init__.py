@@ -1,6 +1,7 @@
 import os
 from flask import Flask, request, abort, jsonify
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy.sql.expression import func
 from flask_cors import CORS
 import random
 
@@ -160,9 +161,7 @@ def create_app(test_config=None):
         category_id = int(quiz_category.get('id'))
 
         category = Category.query.filter_by(id=category_id).one_or_none()
-        if category is None:
-            abort(400)
-
+        
         if category_id:
             questions = Question.query.filter(
                 Question.category == category_id,
