@@ -30,9 +30,7 @@ Open [http://localhost:3000](http://localhost:3000) to view it in the browser. T
 
 ```bash
 npm start
-```
-
-## Request Formatting
+```Request Formatting
 
 The frontend should be fairly straightforward and disgestible. You'll primarily work within the ```components``` folder in order to edit the endpoints utilized by the components. While working on your backend request handling and response formatting, you can reference the frontend to view how it parses the responses. 
 
