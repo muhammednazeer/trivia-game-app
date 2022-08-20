@@ -1,4 +1,6 @@
 import os
+from select import select
+from unicodedata import category
 from flask import Flask, request, abort, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.sql.expression import func
@@ -21,13 +23,6 @@ def paginate_questions(request, selection):
     return current_questions
 
 
-# function to format the categories to a dictionary
-def format_categories(categories):
-    categories_dict = {}
-    for category in categories:
-        categories_dict[category.id] = category.type
-    return categories_dict
-
 def create_app(test_config=None):
     # create and configure the app
     app = Flask(__name__)
@@ -47,148 +42,179 @@ def create_app(test_config=None):
 
     # Endpoint to handle GET requests
     # for all available categories.
-    @app.route('/categories')
+    @app.route('/categories', methods=['GET'])
     def get_categories():
-        categories = Category.query.order_by(Category.id).all()
-        if len(categories) == 0:
+        selection = Category.query.order_by(Category.id).all()
+        current_categories = paginate_questions(request, selection)
+        
+        if len(current_categories) == 0:
             abort(404)
 
         return jsonify({
             'success': True,
-            'categories': format_categories(categories)
+            'categories': {category.id: category.type for category in selection}
         })
 
     # Endpoint to handle GET request to get all the questions and the categories
     @app.route('/questions')
     def get_questions():
-        questions = Question.query.order_by(Question.id).all()
-        categories = Category.query.order_by(Category.id).all()
-        current_questions = paginate_questions(request, questions)
+        try:
+            selection = Question.query.order_by(Question.id).all()
+            current_questions = paginate_questions(request, selection)
+            
+            if len(current_questions) == 0:
+                abort(404)
 
-        if len(current_questions) == 0:
+            #get all the questions categories
+            categories = Category.query.all()
+            categories_dict = {}
+            for category in categories:
+                categories_dict[category.id] = category.type
+
+            return jsonify({
+                'success': True,
+                'questions': current_questions,
+                'total_questions': len(Question.query.all()),
+                'categories': categories_dict
+            })
+        except:
             abort(404)
-
-        return jsonify({
-            'success': True,
-            'total_questions': len(questions),
-            'categories': format_categories(categories),
-            'questions': current_questions
-        })
 
     # Endpoint to DELETE question using a question ID.
     @app.route('/questions/<int:question_id>', methods=['DELETE'])
     def delete_question(question_id):
         try:
-            question = Question.query.filter(Question.id == question_id).one_or_none()
+            question = Question.query.filter_by(id=question_id).one_or_none()
+            # check if the question exists
             if question is None:
                 abort(404)
-
+            
             question.delete()
+            selection = Question.query.order_by(Question.id).all()
+            current_questions = paginate_questions(request, selection)
 
             return jsonify({
                 'success': True,
-                'deleted': question_id,
+                'question': current_questions,
                 'total_questions': len(Question.query.all())
             })
+        
         except:
             abort(422)
 
     # endpoint to POST a new question
     @app.route('/questions', methods=['POST'])
-    def create_question():
+    def create_new_question():
+        # get the data from the request
         body = request.get_json()
 
-        question = body.get('question', None)
-        answer = body.get('answer', None)
-        difficulty = body.get('difficulty', None)
-        category = body.get('category', None)
-        search = body.get('searchTerm', None)
-        try:
-            if search:
-                if search == "":
-                    abort(400)
-                selection = Question.query.order_by(Question.id).filter(
-                    Question.question.ilike('%{}%'.format(search)))
-                questions = [question.format() for question in selection]
-
-                return jsonify({
-                    'success': True,
-                    'questions': questions,
-                    'total_questions': len(selection.all()),
-                })
-            else:
-                if (question is None) or (answer is None) or (difficulty is None) or (category is None):
-                    abort(422)
-
-                question = Question(
-                    question=question,
-                    answer=answer,
-                    difficulty=difficulty,
-                    category=category
-                )
-                question.insert()
-
-                return jsonify({
-                    'success': True,
-                    'created': question.id,
-                    'total_questions': len(Question.query.all())
-                })
-        except:
+        # check if the data is valid
+        if body.get('question', None) is None:
             abort(422)
+        if body.get('answer', None) is None:
+            abort(422)
+        if body.get('difficulty', None) is None:
+            abort(422)
+        if body.get('category', None) is None:
+            abort(422)
+        
+        # create a new question
+        new_question = Question(
+            question=body.get('question'),
+            answer=body.get('answer'),
+            difficulty=body.get('difficulty'),
+            category=body.get('category')
+        )
+        # insert the new question into the database
+        new_question.insert()
+
+        selection = Question.query.order_by(Question.id).all()
+        current_questions = paginate_questions(request, selection)
+
+        return jsonify({
+            'success': True,
+            'question': current_questions,
+            'total_questions': len(Question.query.all())
+        })
+
+    # endpoint to POST  to get question using search term
+    @app.route('/search', methods=['POST'])
+    def search_questions():
+        # get the data from the request
+        body = request.get_json()
+
+        # check if the data is valid
+        if body.get('searchTerm', None) is None:
+            abort(422)
+
+        # search for the question
+        selection = Question.query.filter(Question.question.ilike(f'%{body.get("searchTerm")}%')).all()
+        current_questions = paginate_questions(request, selection)
+
+        return jsonify({
+            'success': True,
+            'questions': current_questions,
+            'total_questions': len(selection)
+        })
+
 
     # GET endpoint to get questions based on category.
     @app.route('/categories/<int:category_id>/questions', methods=['GET'])
     def get_questions_by_category(category_id):
         category = Category.query.filter_by(id=category_id).one_or_none()
-        if category is None:
-            abort(422)
+        if category:
+           question_in_category = Question.query.filter_by(category=str(category.id)).all()
+           current_questions = paginate_questions(request, question_in_category)
+           return jsonify({
+                'success': True,
+                'questions': current_questions,
+                'total_questions': len(question_in_category),
+                'current_category': category.type
+            })
+        else:
+            abort(404)
 
-        selected_questions = Question.query.filter(Question.category == category_id)
-        current_questions = paginate_questions(request, selected_questions)
-
-        return jsonify({
-            'success': True,
-            'questions': current_questions,
-            'total_questions': len(selected_questions.all()),
-            'current_category': category.format()
-        })
 
     # POST endpoint to get questions to play the quiz.
     @app.route('/quizzes', methods=['POST'])
-    def get_quiz_questions():
-        previous_questions = request.json.get('previous_questions')
-        quiz_category = request.json.get('quiz_category')
-        category_id = int(quiz_category.get('id'))
+    def quiz_questions():
+        # get the data from the request
+        body = request.get_json()
+        quiz_category = body.get('quiz_category')
+        previous_questions = body.get('previous_questions')
+        try:
+            if(quiz_category['id'] == 0):
+                selection = Question.query.filter(Question.id.notin_(previous_questions)).all()
+            else:
+                selection = Question.query.filter(Question.id.notin_(previous_questions), Question.category == quiz_category['id']).all()
+            
+            random_index = random.randint(0, len(selection) - 1)
+            next_question = selection[random_index]
 
-        category = Category.query.filter_by(id=category_id).one_or_none()
-        
-        if category_id:
-            questions = Question.query.filter(
-                Question.category == category_id,
-                ~Question.id.in_(previous_questions))
-        else:
-            questions = Question.query.filter(~Question.id.in_(previous_questions))
+            still_questions = len(selection)
+            if(still_questions == 0):
+                return jsonify({
+                    'success': True,
+                    'question': None
+                })
+            else:
+                return jsonify({
+                    'success': True,
+                    'question': next_question.format()
+                })
+        except:
+            abort(422)
+            
+            
 
-        question = questions.order_by(func.random()).first()
-
-        if not question:
-            return jsonify({
-                'success': True,
-                'question': None
-            })
-
-        return jsonify({
-            'success': True,
-            'question': question.format()
-        })
-
+    
     # Error handlers for 400, 404, 422 and 500
     @app.errorhandler(400)
-    def error_not_found(error):
+    def error_400(error):
         return jsonify({
             "success": False,
             "error": 400,
-            "message": "Bad Request"
+            "message": "bad request"
         }), 400
 
     @app.errorhandler(404)
